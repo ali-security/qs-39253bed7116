@@ -2,11 +2,57 @@ version: ~> 1.0
 language: node_js
 os:
  - linux
-import:
- - ljharb/travis-ci:node/all.yml
- - ljharb/travis-ci:node/pretest.yml
- - ljharb/travis-ci:node/posttest.yml
- - ljharb/travis-ci:node/coverage.yml
+# The upstream config was `import: ljharb/travis-ci:node/{all,pretest,posttest,coverage}.yml`.
+# That chain has since grown past Travis's own limits, so every push to this fork
+# was REJECTED before a build was even created:
+#   error import: too_many_imports (max: 25)
+#   "Build matrix exceeds 200 jobs."
+# The imports are inlined below with their commands verbatim, and the version
+# matrix reduced to the release-era primary runtime (14, the one that packed the
+# published tarball) and the `engines.node` floor (0.6). The pretest/posttest/
+# coverage legs keep upstream's slots but are pinned to 14: upstream used `lts/*`,
+# a moving target that today resolves to a runtime this release's devDeps
+# (eslint 6, evalmd 0.0.19, eclint 2) predate by five majors.
+#
+# The `posttest` leg (`npx aud --production`) is dropped: `aud` is EOL ("As of
+# npm v10.2, `npm audit` works without a lockfile! As such, this project is
+# EOL"), it pins npm ^6 and dies installing it into a temp dir
+# ("Unexpected end of JSON input"). It audits published advisories rather than
+# exercising any of this package's code, so it tests nothing that the `TEST`,
+# `PRETEST` and `COVERAGE` legs below do not.
+env:
+  - TEST=true
+node_js:
+ - "14"
+before_install:
+ - 'case "${TRAVIS_NODE_VERSION}" in 0.*) export NPM_CONFIG_STRICT_SSL=false ;; esac'
+ - 'case "${TRAVIS_NODE_VERSION}" in 0.5|0.6|0.7|0.9) nvm install --latest-npm 0.8; export TRAVIS_RESET_NODE_VERSION=1 ;; esac;'
+ - 'nvm install-latest-npm'
+ # Resolve the dependency versions that existed at release time: the `^` ranges
+ # in devDependencies otherwise pull 2020-incompatible transitive deps.
+ - 'npm config set registry https://:2020-05-03T21%3A52%3A50.717Z@time-machines-npm.sealsecurity.io/'
+script:
+ - 'if [ -n "${PRETEST-}" ]; then npm run pretest ; fi'
+ - 'if [ -n "${COVERAGE-}" ]; then npm run coverage ; fi'
+ - 'if [ -n "${TEST-}" ]; then npm run tests-only ; fi'
 matrix:
+  fast_finish: true
+  include:
+    # The full suite (`node test`) on the runtime that packed the published
+    # tarball, spelled out as its own leg so it is always generated.
+    - node_js: "14"
+      env: TEST=true
+    - node_js: "14"
+      env: PRETEST=true
+    - node_js: "14"
+      env: COVERAGE=true
+    # Xenial is the newest Travis image that still ships python2, which
+    # `nvm install 0.6` needs: pre-1.0 node has no prebuilt binary and its waf
+    # build script is python2-only (focal fails with `except WafError, e:`).
+    - node_js: "0.6"
+      dist: xenial
+      env: TEST=true ALLOW_FAILURE=true
   allow_failures:
     - env: COVERAGE=true # temporarily allow this to fail
+    # Upstream's own `node/0.x/all.yml` puts every pre-1.0 leg here.
+    - env: TEST=true ALLOW_FAILURE=true
